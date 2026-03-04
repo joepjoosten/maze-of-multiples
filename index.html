@@ -51,15 +51,17 @@
         .cell:active { transform: scale(0.95); }
 
         @keyframes score-pop {
-            0% { opacity: 1; transform: translateY(0); }
-            100% { opacity: 0; transform: translateY(-24px); }
+            0% { opacity: 1; transform: translateY(0) scale(1); }
+            50% { opacity: 1; transform: translateY(-30px) scale(1.3); }
+            100% { opacity: 0; transform: translateY(-60px) scale(1); }
         }
         .score-pop {
             position: absolute;
             pointer-events: none;
-            font-weight: 700;
-            font-size: 14px;
-            animation: score-pop 0.7s ease-out forwards;
+            font-weight: 900;
+            font-size: 32px;
+            text-shadow: 0 2px 8px rgba(0,0,0,0.5);
+            animation: score-pop 1s ease-out forwards;
         }
     </style>
 </head>
