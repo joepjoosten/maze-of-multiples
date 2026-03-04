@@ -269,57 +269,50 @@
 
     // ─── Maze generation ────────────────────────────────────
     function generateMaze() {
-        const totalCells = gridSize * gridSize;
-        const targetPassable = Math.floor(totalCells * 0.40);
+        const targetLen = gridSize * 2;
+        let solPath = null;
 
-        entrance = randBorderCell();
-        passableSet = new Set([cellKey(...entrance)]);
+        // Build a non-self-touching random walk from a border cell
+        for (let attempt = 0; attempt < 100 && !solPath; attempt++) {
+            entrance = randBorderCell();
+            const path = [[...entrance]];
+            const pathSet = new Set([cellKey(...entrance)]);
 
-        // DFS to carve passable tree
-        const stack = [[...entrance]];
-        const borderCells = [];
+            while (true) {
+                const [cr, cc] = path[path.length - 1];
+                // Valid next: not on path, and no neighbor already on path except current cell
+                const candidates = shuffle(getNeighbors(cr, cc).filter(([nr, nc]) => {
+                    if (pathSet.has(cellKey(nr, nc))) return false;
+                    for (const [ar, ac] of getNeighbors(nr, nc)) {
+                        if (ar === cr && ac === cc) continue;
+                        if (pathSet.has(cellKey(ar, ac))) return false;
+                    }
+                    return true;
+                }));
 
-        while (stack.length > 0 && passableSet.size < targetPassable) {
-            const [cr, cc] = stack[stack.length - 1];
-            const neighbors = shuffle(
-                getNeighbors(cr, cc).filter(([nr, nc]) => !passableSet.has(cellKey(nr, nc)))
-            );
-            if (neighbors.length === 0) { stack.pop(); continue; }
+                if (candidates.length === 0) break; // stuck, retry
 
-            const [nr, nc] = neighbors[0];
-            passableSet.add(cellKey(nr, nc));
-            stack.push([nr, nc]);
+                const [nr, nc] = candidates[0];
+                path.push([nr, nc]);
+                pathSet.add(cellKey(nr, nc));
 
-            if (isBorder(nr, nc) && !(nr === entrance[0] && nc === entrance[1])) {
-                borderCells.push([nr, nc]);
+                // Accept exit once path is long enough and we hit a border
+                if (path.length >= targetLen && isBorder(nr, nc)) {
+                    mazeExit = [nr, nc];
+                    solPath = path;
+                }
             }
         }
 
-        // Pick exit: prefer border cell far from entrance
-        if (borderCells.length > 0) {
-            borderCells.sort((a, b) => manhattanDist(b, entrance) - manhattanDist(a, entrance));
-            mazeExit = borderCells[0];
-        } else {
-            // Fallback: opposite border
-            mazeExit = oppositeBorderCell(entrance);
-            passableSet.add(cellKey(...mazeExit));
-        }
-
-        // Guarantee a path exists
-        if (!bfsPathExists(entrance, mazeExit)) {
-            carvePath(entrance, mazeExit);
-        }
-
-        // Find the single solution path
-        const solPath = findSolution();
-        const solSet = new Set(solPath.map(([r, c]) => cellKey(r, c)));
+        // Set passableSet to solution path (used by findSolution / solveMaze)
+        passableSet = new Set(solPath.map(([r, c]) => cellKey(r, c)));
 
         // Assign numbers: only solution path cells get multiples
         grid = [];
         for (let r = 0; r < gridSize; r++) {
             grid[r] = [];
             for (let c = 0; c < gridSize; c++) {
-                if (solSet.has(cellKey(r, c))) {
+                if (passableSet.has(cellKey(r, c))) {
                     const factor = 1 + Math.floor(Math.random() * maxFactor);
                     grid[r][c] = multiple * factor;
                 } else {
@@ -327,79 +320,24 @@
                 }
             }
         }
-        // Entrance always shows exactly the multiple
         grid[entrance[0]][entrance[1]] = multiple;
 
-        // Ensure no two adjacent solution cells share the same number
-        for (let i = 0; i < solPath.length; i++) {
+        // Ensure no two adjacent path cells share the same number
+        for (let i = 1; i < solPath.length; i++) {
             const [r, c] = solPath[i];
-            if (r === entrance[0] && c === entrance[1]) continue;
-            const neighborVals = getNeighbors(r, c)
-                .filter(([nr, nc]) => solSet.has(cellKey(nr, nc)))
-                .map(([nr, nc]) => grid[nr][nc]);
+            const prevVal = grid[solPath[i - 1][0]][solPath[i - 1][1]];
             let attempts = 0;
-            while (neighborVals.includes(grid[r][c]) && attempts < 20) {
+            while (grid[r][c] === prevVal && attempts < 20) {
                 grid[r][c] = multiple * (1 + Math.floor(Math.random() * maxFactor));
                 attempts++;
             }
         }
 
-        // Verify: no non-solution cell is a multiple (safety net)
+        // Safety net: no non-path cell should be a multiple
         for (let r = 0; r < gridSize; r++) {
             for (let c = 0; c < gridSize; c++) {
-                if (!solSet.has(cellKey(r, c)) && grid[r][c] % multiple === 0) {
+                if (!passableSet.has(cellKey(r, c)) && grid[r][c] % multiple === 0) {
                     grid[r][c] = grid[r][c] - 1 || 1;
-                }
-            }
-        }
-    }
-
-    function oppositeBorderCell([er, ec]) {
-        const pos = 1 + Math.floor(Math.random() * (gridSize - 2));
-        if (er === 0) return [gridSize - 1, pos];
-        if (er === gridSize - 1) return [0, pos];
-        if (ec === 0) return [pos, gridSize - 1];
-        return [pos, 0];
-    }
-
-    function bfsPathExists(start, end) {
-        const queue = [start];
-        const visited = new Set([cellKey(...start)]);
-        while (queue.length > 0) {
-            const [cr, cc] = queue.shift();
-            if (cr === end[0] && cc === end[1]) return true;
-            for (const [nr, nc] of getNeighbors(cr, cc)) {
-                const k = cellKey(nr, nc);
-                if (!visited.has(k) && passableSet.has(k)) {
-                    visited.add(k);
-                    queue.push([nr, nc]);
-                }
-            }
-        }
-        return false;
-    }
-
-    function carvePath(start, end) {
-        // BFS through entire grid (ignoring passable), then mark path as passable
-        const queue = [start];
-        const visited = new Set([cellKey(...start)]);
-        const parent = new Map();
-        while (queue.length > 0) {
-            const [cr, cc] = queue.shift();
-            if (cr === end[0] && cc === end[1]) {
-                let cur = end;
-                while (cur) {
-                    passableSet.add(cellKey(...cur));
-                    cur = parent.get(cellKey(...cur));
-                }
-                return;
-            }
-            for (const [nr, nc] of getNeighbors(cr, cc)) {
-                const k = cellKey(nr, nc);
-                if (!visited.has(k)) {
-                    visited.add(k);
-                    parent.set(k, [cr, cc]);
-                    queue.push([nr, nc]);
                 }
             }
         }
