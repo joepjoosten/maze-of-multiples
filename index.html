@@ -314,6 +314,22 @@
         // Entrance always shows exactly the multiple
         grid[entrance[0]][entrance[1]] = multiple;
 
+        // Ensure no two adjacent passable cells share the same number
+        for (let r = 0; r < gridSize; r++) {
+            for (let c = 0; c < gridSize; c++) {
+                if (!passableSet.has(cellKey(r, c))) continue;
+                if (r === entrance[0] && c === entrance[1]) continue;
+                const neighborVals = getNeighbors(r, c)
+                    .filter(([nr, nc]) => passableSet.has(cellKey(nr, nc)))
+                    .map(([nr, nc]) => grid[nr][nc]);
+                let attempts = 0;
+                while (neighborVals.includes(grid[r][c]) && attempts < 20) {
+                    grid[r][c] = multiple * (1 + Math.floor(Math.random() * maxFactor));
+                    attempts++;
+                }
+            }
+        }
+
         // Verify: non-passable cells must never show a multiple
         for (let r = 0; r < gridSize; r++) {
             for (let c = 0; c < gridSize; c++) {
@@ -448,6 +464,7 @@
         if (!gameActive || pathHistory.length <= 1) return;
         pathHistory.pop();
         currentPos = [...pathHistory[pathHistory.length - 1]];
+        visitedCells = new Set(pathHistory.map(([r, c]) => cellKey(r, c)));
         moveCount++;
         document.getElementById('moves-count').textContent = moveCount;
         document.getElementById('undo-btn').disabled = pathHistory.length <= 1;
