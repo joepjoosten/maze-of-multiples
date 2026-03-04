@@ -310,12 +310,16 @@
             carvePath(entrance, mazeExit);
         }
 
-        // Assign numbers
+        // Find the single solution path
+        const solPath = findSolution();
+        const solSet = new Set(solPath.map(([r, c]) => cellKey(r, c)));
+
+        // Assign numbers: only solution path cells get multiples
         grid = [];
         for (let r = 0; r < gridSize; r++) {
             grid[r] = [];
             for (let c = 0; c < gridSize; c++) {
-                if (passableSet.has(cellKey(r, c))) {
+                if (solSet.has(cellKey(r, c))) {
                     const factor = 1 + Math.floor(Math.random() * maxFactor);
                     grid[r][c] = multiple * factor;
                 } else {
@@ -326,27 +330,24 @@
         // Entrance always shows exactly the multiple
         grid[entrance[0]][entrance[1]] = multiple;
 
-        // Ensure no two adjacent passable cells share the same number
-        for (let r = 0; r < gridSize; r++) {
-            for (let c = 0; c < gridSize; c++) {
-                if (!passableSet.has(cellKey(r, c))) continue;
-                if (r === entrance[0] && c === entrance[1]) continue;
-                const neighborVals = getNeighbors(r, c)
-                    .filter(([nr, nc]) => passableSet.has(cellKey(nr, nc)))
-                    .map(([nr, nc]) => grid[nr][nc]);
-                let attempts = 0;
-                while (neighborVals.includes(grid[r][c]) && attempts < 20) {
-                    grid[r][c] = multiple * (1 + Math.floor(Math.random() * maxFactor));
-                    attempts++;
-                }
+        // Ensure no two adjacent solution cells share the same number
+        for (let i = 0; i < solPath.length; i++) {
+            const [r, c] = solPath[i];
+            if (r === entrance[0] && c === entrance[1]) continue;
+            const neighborVals = getNeighbors(r, c)
+                .filter(([nr, nc]) => solSet.has(cellKey(nr, nc)))
+                .map(([nr, nc]) => grid[nr][nc]);
+            let attempts = 0;
+            while (neighborVals.includes(grid[r][c]) && attempts < 20) {
+                grid[r][c] = multiple * (1 + Math.floor(Math.random() * maxFactor));
+                attempts++;
             }
         }
 
-        // Verify: non-passable cells must never show a multiple
+        // Verify: no non-solution cell is a multiple (safety net)
         for (let r = 0; r < gridSize; r++) {
             for (let c = 0; c < gridSize; c++) {
-                if (!passableSet.has(cellKey(r, c)) && grid[r][c] % multiple === 0) {
-                    // Fix: replace with guaranteed non-multiple
+                if (!solSet.has(cellKey(r, c)) && grid[r][c] % multiple === 0) {
                     grid[r][c] = grid[r][c] - 1 || 1;
                 }
             }
