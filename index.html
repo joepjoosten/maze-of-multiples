@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Maze of Multiples</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @keyframes pulse-ring {
+            0% { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.6); }
+            70% { box-shadow: 0 0 0 8px rgba(251, 191, 36, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0); }
+        }
+        .cell-current { animation: pulse-ring 1.5s infinite; }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            20% { transform: translateX(-5px); }
+            40% { transform: translateX(5px); }
+            60% { transform: translateX(-3px); }
+            80% { transform: translateX(3px); }
+        }
+        .cell-shake { animation: shake 0.35s ease-in-out; }
+
+        @keyframes confetti-fall {
+            0% { transform: translateY(0) rotate(0deg); opacity: 1; }
+            100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
+        }
+        .confetti-piece {
+            position: fixed;
+            top: -20px;
+            width: 10px;
+            height: 10px;
+            animation: confetti-fall linear forwards;
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        .cell {
+            transition: background-color 0.15s, transform 0.1s;
+            cursor: pointer;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+            position: relative;
+        }
+        @media (hover: hover) and (pointer: fine) {
+            .cell:hover { transform: scale(1.08); z-index: 10; }
+        }
+        .cell:active { transform: scale(0.95); }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen flex flex-col items-center">
+    <div class="w-full max-w-3xl mx-auto px-4 py-6">
+        <h1 class="text-3xl sm:text-4xl font-bold text-center mb-1 text-amber-400">Maze of Multiples</h1>
+        <p class="text-center text-gray-500 mb-6 text-sm">Find the exit by following the multiples</p>
+
+        <!-- Settings -->
+        <div class="flex flex-wrap justify-center gap-3 mb-6">
+            <div class="flex items-center gap-2">
+                <label for="size-select" class="text-gray-400 text-sm font-medium">Size</label>
+                <select id="size-select" class="bg-gray-800 text-white rounded-lg px-3 py-2.5 border border-gray-700 focus:border-amber-500 focus:outline-none text-sm min-h-[44px]">
+                    <option value="small">Small (7&times;7)</option>
+                    <option value="medium" selected>Medium (11&times;11)</option>
+                    <option value="large">Large (15&times;15)</option>
+                </select>
+            </div>
+            <div class="flex items-center gap-2">
+                <label for="mult-select" class="text-gray-400 text-sm font-medium">Multiple&nbsp;of</label>
+                <select id="mult-select" class="bg-gray-800 text-white rounded-lg px-3 py-2.5 border border-gray-700 focus:border-amber-500 focus:outline-none text-sm min-h-[44px]"></select>
+            </div>
+            <div class="flex items-center gap-2">
+                <label for="range-select" class="text-gray-400 text-sm font-medium">Up&nbsp;to</label>
+                <select id="range-select" class="bg-gray-800 text-white rounded-lg px-3 py-2.5 border border-gray-700 focus:border-amber-500 focus:outline-none text-sm min-h-[44px]">
+                    <option value="10" selected>&times;10</option>
+                    <option value="20">&times;20</option>
+                </select>
+            </div>
+            <button onclick="startGame()" class="bg-amber-500 hover:bg-amber-400 text-gray-900 font-bold px-5 py-2.5 rounded-lg transition-colors text-sm min-h-[44px]">
+                New Maze
+            </button>
+        </div>
+
+        <!-- Game info bar -->
+        <div id="game-info" class="hidden">
+            <div class="flex flex-wrap justify-between items-center mb-3 bg-gray-800/80 rounded-lg px-4 py-2 gap-2">
+                <div class="text-gray-300 text-sm">
+                    Follow multiples of
+                    <span id="mult-display" class="text-amber-400 font-bold text-lg align-middle">?</span>
+                </div>
+                <div class="flex items-center gap-4 text-sm">
+                    <span class="text-gray-400">Moves: <span id="moves-count" class="text-white font-bold">0</span></span>
+                    <button onclick="undoMove()" id="undo-btn" class="min-w-[44px] min-h-[44px] flex items-center justify-center text-gray-400 hover:text-white transition-colors disabled:opacity-30" disabled title="Undo last move">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M7.707 3.293a1 1 0 010 1.414L5.414 7H11a7 7 0 017 7v2a1 1 0 11-2 0v-2a5 5 0 00-5-5H5.414l2.293 2.293a1 1 0 11-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                    </button>
+                    <button onclick="solveMaze()" id="solve-btn" class="min-h-[44px] text-gray-400 hover:text-amber-400 transition-colors text-sm border border-gray-600 rounded px-3 py-2">
+                        Solution
+                    </button>
+                </div>
+            </div>
+            <div class="flex justify-center gap-4 mb-3 text-xs text-gray-500">
+                <span><span class="inline-block w-3 h-3 rounded bg-emerald-600 align-middle mr-1"></span>Entrance</span>
+                <span><span class="inline-block w-3 h-3 rounded bg-rose-600 align-middle mr-1"></span>Exit</span>
+                <span><span class="inline-block w-3 h-3 rounded bg-amber-500 align-middle mr-1"></span>You</span>
+            </div>
+        </div>
+
+        <!-- Maze grid -->
+        <div id="maze-container" class="flex justify-center mb-6 overflow-x-auto -mx-4 px-4">
+            <div id="maze" class="inline-grid"></div>
+        </div>
+
+        <!-- Win message -->
+        <div id="win-message" class="hidden text-center mb-6">
+            <div class="bg-gradient-to-br from-amber-500 to-yellow-400 text-gray-900 rounded-xl p-6 shadow-2xl inline-block">
+                <p class="text-3xl font-bold mb-1">You escaped!</p>
+                <p class="text-base mb-4" id="win-stats"></p>
+                <button onclick="startGame()" class="bg-gray-900 text-amber-400 font-bold px-6 py-2 rounded-lg hover:bg-gray-800 transition-colors text-sm">
+                    Play Again
+                </button>
+            </div>
+        </div>
+
+        <!-- How to play -->
+        <details class="bg-gray-800/60 rounded-lg p-4 text-sm text-gray-400 mb-4">
+            <summary class="cursor-pointer text-gray-300 font-medium">How to play</summary>
+            <ol class="list-decimal list-inside mt-2 space-y-1">
+                <li>Choose a maze size and a number, then click <strong class="text-amber-400">New Maze</strong>.</li>
+                <li>You start at the <strong class="text-emerald-400">green</strong> entrance cell.</li>
+                <li>Click an <em>adjacent</em> cell whose number is a <strong class="text-amber-400">multiple</strong> of the entrance number to move there.</li>
+                <li>Keep navigating until you reach the <strong class="text-rose-400">red</strong> exit cell.</li>
+                <li>Non-multiples are walls &mdash; you cannot step on them!</li>
+            </ol>
+        </details>
+    </div>
+
+    <!-- Confetti container -->
+    <div id="confetti-container"></div>
+
+    <script>
+    // ─── State ──────────────────────────────────────────────
+    let grid = [];
+    let gridSize = 0;
+    let multiple = 0;
+    let entrance = null;   // [r, c]
+    let mazeExit = null;   // [r, c]
+    let currentPos = null; // [r, c]
+    let pathHistory = [];  // stack of [r,c]
+    let visitedCells = new Set();
+    let moveCount = 0;
+    let gameActive = false;
+    let passableSet = new Set();
+    let maxFactor = 10;
+    let maxNumber = 100;
+    let solutionShown = false;
+    let solutionPath = [];
+
+    const SIZES = { small: 7, medium: 11, large: 15 };
+
+    // ─── Init selectors ────────────────────────────────────
+    const multSelect = document.getElementById('mult-select');
+    for (let i = 2; i <= 10; i++) {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = i;
+        if (i === 3) opt.selected = true;
+        multSelect.appendChild(opt);
+    }
+
+    // ─── Helpers ────────────────────────────────────────────
+    function cellKey(r, c) { return r * 1000 + c; }
+    function isBorder(r, c) {
+        return r === 0 || r === gridSize - 1 || c === 0 || c === gridSize - 1;
+    }
+    function getNeighbors(r, c) {
+        const dirs = [[-1,0],[1,0],[0,-1],[0,1]];
+        return dirs
+            .map(([dr, dc]) => [r + dr, c + dc])
+            .filter(([nr, nc]) => nr >= 0 && nr < gridSize && nc >= 0 && nc < gridSize);
+    }
+    function shuffle(arr) {
+        for (let i = arr.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [arr[i], arr[j]] = [arr[j], arr[i]];
+        }
+        return arr;
+    }
+    function randBorderCell() {
+        const side = Math.floor(Math.random() * 4);
+        const pos = 1 + Math.floor(Math.random() * (gridSize - 2));
+        switch (side) {
+            case 0: return [0, pos];
+            case 1: return [gridSize - 1, pos];
+            case 2: return [pos, 0];
+            case 3: return [pos, gridSize - 1];
+        }
+    }
+    function manhattanDist(a, b) {
+        return Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]);
+    }
+
+    // ─── Maze generation ────────────────────────────────────
+    function generateMaze() {
+        const totalCells = gridSize * gridSize;
+        const targetPassable = Math.floor(totalCells * 0.40);
+
+        entrance = randBorderCell();
+        passableSet = new Set([cellKey(...entrance)]);
+
+        // DFS to carve passable tree
+        const stack = [[...entrance]];
+        const borderCells = [];
+
+        while (stack.length > 0 && passableSet.size < targetPassable) {
+            const [cr, cc] = stack[stack.length - 1];
+            const neighbors = shuffle(
+                getNeighbors(cr, cc).filter(([nr, nc]) => !passableSet.has(cellKey(nr, nc)))
+            );
+            if (neighbors.length === 0) { stack.pop(); continue; }
+
+            const [nr, nc] = neighbors[0];
+            passableSet.add(cellKey(nr, nc));
+            stack.push([nr, nc]);
+
+            if (isBorder(nr, nc) && !(nr === entrance[0] && nc === entrance[1])) {
+                borderCells.push([nr, nc]);
+            }
+        }
+
+        // Pick exit: prefer border cell far from entrance
+        if (borderCells.length > 0) {
+            borderCells.sort((a, b) => manhattanDist(b, entrance) - manhattanDist(a, entrance));
+            mazeExit = borderCells[0];
+        } else {
+            // Fallback: opposite border
+            mazeExit = oppositeBorderCell(entrance);
+            passableSet.add(cellKey(...mazeExit));
+        }
+
+        // Guarantee a path exists
+        if (!bfsPathExists(entrance, mazeExit)) {
+            carvePath(entrance, mazeExit);
+        }
+
+        // Assign numbers
+        grid = [];
+        for (let r = 0; r < gridSize; r++) {
+            grid[r] = [];
+            for (let c = 0; c < gridSize; c++) {
+                if (passableSet.has(cellKey(r, c))) {
+                    const factor = 1 + Math.floor(Math.random() * maxFactor);
+                    grid[r][c] = multiple * factor;
+                } else {
+                    grid[r][c] = randNonMultiple();
+                }
+            }
+        }
+        // Entrance always shows exactly the multiple
+        grid[entrance[0]][entrance[1]] = multiple;
+
+        // Verify: non-passable cells must never show a multiple
+        for (let r = 0; r < gridSize; r++) {
+            for (let c = 0; c < gridSize; c++) {
+                if (!passableSet.has(cellKey(r, c)) && grid[r][c] % multiple === 0) {
+                    // Fix: replace with guaranteed non-multiple
+                    grid[r][c] = grid[r][c] - 1 || 1;
+                }
+            }
+        }
+    }
+
+    function oppositeBorderCell([er, ec]) {
+        const pos = 1 + Math.floor(Math.random() * (gridSize - 2));
+        if (er === 0) return [gridSize - 1, pos];
+        if (er === gridSize - 1) return [0, pos];
+        if (ec === 0) return [pos, gridSize - 1];
+        return [pos, 0];
+    }
+
+    function bfsPathExists(start, end) {
+        const queue = [start];
+        const visited = new Set([cellKey(...start)]);
+        while (queue.length > 0) {
+            const [cr, cc] = queue.shift();
+            if (cr === end[0] && cc === end[1]) return true;
+            for (const [nr, nc] of getNeighbors(cr, cc)) {
+                const k = cellKey(nr, nc);
+                if (!visited.has(k) && passableSet.has(k)) {
+                    visited.add(k);
+                    queue.push([nr, nc]);
+                }
+            }
+        }
+        return false;
+    }
+
+    function carvePath(start, end) {
+        // BFS through entire grid (ignoring passable), then mark path as passable
+        const queue = [start];
+        const visited = new Set([cellKey(...start)]);
+        const parent = new Map();
+        while (queue.length > 0) {
+            const [cr, cc] = queue.shift();
+            if (cr === end[0] && cc === end[1]) {
+                let cur = end;
+                while (cur) {
+                    passableSet.add(cellKey(...cur));
+                    cur = parent.get(cellKey(...cur));
+                }
+                return;
+            }
+            for (const [nr, nc] of getNeighbors(cr, cc)) {
+                const k = cellKey(nr, nc);
+                if (!visited.has(k)) {
+                    visited.add(k);
+                    parent.set(k, [cr, cc]);
+                    queue.push([nr, nc]);
+                }
+            }
+        }
+    }
+
+    function randNonMultiple() {
+        let num = 1 + Math.floor(Math.random() * maxNumber);
+        if (num % multiple === 0) {
+            // Subtract a random offset 1..(multiple-1): always lands on a non-multiple
+            // and stays >= 1 since num >= multiple
+            num -= 1 + Math.floor(Math.random() * (multiple - 1));
+        }
+        return num;
+    }
+
+    // ─── Find solution path (BFS) ───────────────────────────
+    function findSolution() {
+        const queue = [entrance];
+        const visited = new Set([cellKey(...entrance)]);
+        const parent = new Map();
+        while (queue.length > 0) {
+            const [cr, cc] = queue.shift();
+            if (cr === mazeExit[0] && cc === mazeExit[1]) {
+                const path = [];
+                let cur = [cr, cc];
+                while (cur) {
+                    path.unshift(cur);
+                    cur = parent.get(cellKey(...cur));
+                }
+                return path;
+            }
+            for (const [nr, nc] of getNeighbors(cr, cc)) {
+                const k = cellKey(nr, nc);
+                if (!visited.has(k) && passableSet.has(k)) {
+                    visited.add(k);
+                    parent.set(k, [cr, cc]);
+                    queue.push([nr, nc]);
+                }
+            }
+        }
+        return [];
+    }
+
+    // ─── Game actions ───────────────────────────────────────
+    function startGame() {
+        const size = document.getElementById('size-select').value;
+        multiple = parseInt(document.getElementById('mult-select').value);
+        maxFactor = parseInt(document.getElementById('range-select').value);
+        maxNumber = maxFactor * 10;
+        gridSize = SIZES[size];
+
+        generateMaze();
+
+        currentPos = [...entrance];
+        pathHistory = [[...entrance]];
+        visitedCells = new Set([cellKey(...entrance)]);
+        moveCount = 0;
+        gameActive = true;
+        solutionShown = false;
+        solutionPath = [];
+
+        document.getElementById('game-info').classList.remove('hidden');
+        document.getElementById('win-message').classList.add('hidden');
+        document.getElementById('mult-display').textContent = multiple;
+        document.getElementById('moves-count').textContent = '0';
+        document.getElementById('undo-btn').disabled = true;
+
+        renderMaze();
+    }
+
+    function undoMove() {
+        if (!gameActive || pathHistory.length <= 1) return;
+        pathHistory.pop();
+        currentPos = [...pathHistory[pathHistory.length - 1]];
+        moveCount++;
+        document.getElementById('moves-count').textContent = moveCount;
+        document.getElementById('undo-btn').disabled = pathHistory.length <= 1;
+        renderMaze();
+    }
+
+    function solveMaze() {
+        if (!gameActive && !solutionShown) return;
+        solutionPath = findSolution();
+        solutionShown = true;
+        gameActive = false;
+        renderMaze();
+    }
+
+    function handleCellClick(r, c) {
+        if (!gameActive) return;
+
+        const [cr, cc] = currentPos;
+        const dist = Math.abs(r - cr) + Math.abs(c - cc);
+
+        // Must be adjacent
+        if (dist !== 1) {
+            flashCell(r, c);
+            return;
+        }
+
+        // Must be a multiple
+        if (grid[r][c] % multiple !== 0) {
+            flashCell(r, c);
+            return;
+        }
+
+        // Valid move
+        currentPos = [r, c];
+        visitedCells.add(cellKey(r, c));
+        pathHistory.push([r, c]);
+        moveCount++;
+        document.getElementById('moves-count').textContent = moveCount;
+        document.getElementById('undo-btn').disabled = pathHistory.length <= 1;
+
+        // Win check
+        if (r === mazeExit[0] && c === mazeExit[1]) {
+            gameActive = false;
+            renderMaze();
+            showWin();
+            return;
+        }
+
+        renderMaze();
+    }
+
+    function flashCell(r, c) {
+        const el = document.querySelector(`[data-r="${r}"][data-c="${c}"]`);
+        if (!el) return;
+        el.classList.add('cell-shake');
+        const orig = el.style.backgroundColor;
+        el.style.backgroundColor = 'rgb(220, 38, 38)';
+        setTimeout(() => {
+            el.classList.remove('cell-shake');
+            el.style.backgroundColor = orig;
+        }, 350);
+    }
+
+    // ─── Rendering ──────────────────────────────────────────
+    function renderMaze() {
+        const maze = document.getElementById('maze');
+        const maxW = Math.min(window.innerWidth - 32, 720);
+        const gap = 3;
+        const rawCellSize = Math.floor((maxW - (gridSize - 1) * gap) / gridSize);
+        const cellSize = Math.max(rawCellSize, 44); // 44px minimum for touch targets
+        const fontSize = cellSize < 38 ? 'text-[11px]' : cellSize < 48 ? 'text-xs' : 'text-sm';
+        maze.style.gap = gap + 'px';
+
+        maze.style.gridTemplateColumns = `repeat(${gridSize}, ${cellSize}px)`;
+        maze.style.gridTemplateRows = `repeat(${gridSize}, ${cellSize}px)`;
+        maze.innerHTML = '';
+
+        const solSet = new Set();
+        if (solutionShown) {
+            solutionPath.forEach(([sr, sc]) => solSet.add(cellKey(sr, sc)));
+        }
+
+        for (let r = 0; r < gridSize; r++) {
+            for (let c = 0; c < gridSize; c++) {
+                const cell = document.createElement('div');
+                const isEntrance = r === entrance[0] && c === entrance[1];
+                const isExit = r === mazeExit[0] && c === mazeExit[1];
+                const isCurrent = r === currentPos[0] && c === currentPos[1];
+                const isVisited = visitedCells.has(cellKey(r, c));
+                const isOnSolution = solSet.has(cellKey(r, c));
+
+                let bg = 'bg-gray-700';
+                let text = 'text-gray-300';
+                let extra = '';
+
+                if (isCurrent && !solutionShown) {
+                    bg = 'bg-amber-500'; text = 'text-gray-900 font-extrabold'; extra = 'cell-current';
+                } else if (isEntrance) {
+                    bg = 'bg-emerald-600'; text = 'text-white font-bold'; extra = 'ring-2 ring-emerald-400';
+                } else if (isExit) {
+                    bg = 'bg-rose-600'; text = 'text-white font-bold'; extra = 'ring-2 ring-rose-400';
+                } else if (isOnSolution) {
+                    bg = 'bg-amber-400/60'; text = 'text-white font-bold';
+                } else if (isVisited) {
+                    bg = 'bg-indigo-600/50'; text = 'text-white';
+                }
+
+                cell.className = `cell flex items-center justify-center rounded ${fontSize} ${bg} ${text} ${extra}`;
+                cell.textContent = grid[r][c];
+                cell.dataset.r = r;
+                cell.dataset.c = c;
+                cell.addEventListener('click', () => handleCellClick(r, c));
+
+                maze.appendChild(cell);
+            }
+        }
+    }
+
+    // ─── Win celebration ────────────────────────────────────
+    function showWin() {
+        document.getElementById('win-message').classList.remove('hidden');
+        document.getElementById('win-stats').textContent =
+            `Completed in ${moveCount} move${moveCount !== 1 ? 's' : ''}!`;
+        spawnConfetti();
+    }
+
+    function spawnConfetti() {
+        const container = document.getElementById('confetti-container');
+        container.innerHTML = '';
+        const colors = ['#f59e0b','#10b981','#3b82f6','#ef4444','#8b5cf6','#ec4899','#14b8a6'];
+        for (let i = 0; i < 60; i++) {
+            const piece = document.createElement('div');
+            piece.className = 'confetti-piece';
+            piece.style.left = Math.random() * 100 + 'vw';
+            piece.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+            piece.style.animationDuration = (2 + Math.random() * 3) + 's';
+            piece.style.animationDelay = Math.random() * 1.5 + 's';
+            piece.style.borderRadius = Math.random() > 0.5 ? '50%' : '2px';
+            piece.style.width = (6 + Math.random() * 8) + 'px';
+            piece.style.height = (6 + Math.random() * 8) + 'px';
+            container.appendChild(piece);
+        }
+        setTimeout(() => { container.innerHTML = ''; }, 6000);
+    }
+
+    // ─── Responsive resize ──────────────────────────────────
+    window.addEventListener('resize', () => { if (grid.length) renderMaze(); });
+
+    // ─── Auto-start a game ──────────────────────────────────
+    startGame();
+    </script>
+</body>
+</html>
