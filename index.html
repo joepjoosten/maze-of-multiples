@@ -63,6 +63,44 @@
             text-shadow: 0 2px 8px rgba(0,0,0,0.5);
             animation: score-pop 1s ease-out forwards;
         }
+
+        @keyframes water-fill {
+            0% { height: 0; }
+            100% { height: 100%; }
+        }
+        .cell-flood::after,
+        .cell-flood-head::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 100%;
+            background: rgba(37, 99, 235, 0.85);
+            border-radius: inherit;
+        }
+        .cell-flood-head::after {
+            height: 0;
+            animation: water-fill 0.6s ease-in forwards;
+        }
+        .chase-timer {
+            position: absolute;
+            top: 2px;
+            right: 3px;
+            background: rgba(37, 99, 235, 0.9);
+            color: white;
+            font-size: 10px;
+            font-weight: 800;
+            line-height: 1;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+        }
+
     </style>
 </head>
 <body class="bg-gray-900 text-white min-h-screen flex flex-col items-center">
@@ -90,6 +128,10 @@
                     <option value="10" selected>&times;10</option>
                     <option value="20">&times;20</option>
                 </select>
+            </div>
+            <div class="flex items-center gap-2">
+                <label for="timed-toggle" class="text-gray-400 text-sm font-medium">Chase</label>
+                <input type="checkbox" id="timed-toggle" class="w-5 h-5 accent-amber-500 cursor-pointer min-w-[44px] min-h-[44px]">
             </div>
             <button onclick="startGame()" class="bg-amber-500 hover:bg-amber-400 text-gray-900 font-bold px-5 py-2.5 rounded-lg transition-colors text-sm min-h-[44px]">
                 New Maze
@@ -133,6 +175,17 @@
                 <p class="text-base mb-4" id="win-stats"></p>
                 <button onclick="startGame()" class="bg-gray-900 text-amber-400 font-bold px-6 py-2 rounded-lg hover:bg-gray-800 transition-colors text-sm">
                     Play Again
+                </button>
+            </div>
+        </div>
+
+        <!-- Game over message -->
+        <div id="gameover-message" class="hidden text-center mb-6">
+            <div class="bg-gradient-to-br from-rose-700 to-red-600 text-white rounded-xl p-6 shadow-2xl inline-block">
+                <p class="text-3xl font-bold mb-1">Game Over!</p>
+                <p class="text-base mb-4">The flood caught you! (-10 points)</p>
+                <button onclick="startGame()" class="bg-gray-900 text-rose-400 font-bold px-6 py-2 rounded-lg hover:bg-gray-800 transition-colors text-sm">
+                    Try Again
                 </button>
             </div>
         </div>
@@ -186,14 +239,22 @@
     let pathHistory = [];  // stack of [r,c]
     let visitedCells = new Set();
     let moveCount = 0;
-    let gameActive = false;
+    let gameState = 'idle'; // 'idle' | 'playing' | 'won' | 'gameover' | 'solution'
     let passableSet = new Set();
     let maxFactor = 10;
     let maxNumber = 100;
-    let solutionShown = false;
     let solutionPath = [];
     let sessionScore = 0;
     let stats = loadStats();
+
+    // Chase mode state
+    let timedMode = false;
+    let countdownTimer = null;
+    let chaseCountdown = 0;
+    let chaseTimer = null;
+    let filledSet = new Set();
+    let filledIndex = 0;
+    let solPathCache = [];
 
     const SIZES = { small: 7, medium: 11, large: 15 };
 
@@ -308,6 +369,7 @@
 
         // Set passableSet to solution path (used by findSolution / solveMaze)
         passableSet = new Set(solPath.map(([r, c]) => cellKey(r, c)));
+        solPathCache = solPath;
 
         // Assign numbers: only solution path cells get multiples
         grid = [];
@@ -385,11 +447,14 @@
 
     // ─── Game actions ───────────────────────────────────────
     function startGame() {
+        stopChase();
+
         const size = document.getElementById('size-select').value;
         multiple = parseInt(document.getElementById('mult-select').value);
         maxFactor = parseInt(document.getElementById('range-select').value);
         maxNumber = maxFactor * 10;
         gridSize = SIZES[size];
+        timedMode = document.getElementById('timed-toggle').checked;
 
         generateMaze();
 
@@ -398,12 +463,15 @@
         visitedCells = new Set([cellKey(...entrance)]);
         moveCount = 0;
         sessionScore = 0;
-        gameActive = true;
-        solutionShown = false;
+        gameState = 'playing';
         solutionPath = [];
+        filledSet = new Set();
+        filledIndex = 0;
+        chaseCountdown = 0;
 
         document.getElementById('game-info').classList.remove('hidden');
         document.getElementById('win-message').classList.add('hidden');
+        document.getElementById('gameover-message').classList.add('hidden');
         document.getElementById('mult-display').textContent = multiple;
         document.getElementById('moves-count').textContent = '0';
         document.getElementById('undo-btn').disabled = true;
@@ -411,10 +479,18 @@
         renderStatsTable();
 
         renderMaze();
+
+        if (timedMode) startChase();
     }
 
     function undoMove() {
-        if (!gameActive || pathHistory.length <= 1) return;
+        if (gameState !== 'playing' || pathHistory.length <= 1) return;
+        // Block undo if the cell we'd go back to is flooded
+        const prevPos = pathHistory[pathHistory.length - 2];
+        if (timedMode && filledSet.has(cellKey(prevPos[0], prevPos[1]))) {
+            flashCell(prevPos[0], prevPos[1]);
+            return;
+        }
         pathHistory.pop();
         currentPos = [...pathHistory[pathHistory.length - 1]];
         visitedCells = new Set(pathHistory.map(([r, c]) => cellKey(r, c)));
@@ -425,21 +501,27 @@
     }
 
     function solveMaze() {
-        if (!gameActive && !solutionShown) return;
+        if (gameState !== 'playing') return;
+        stopChase();
         solutionPath = findSolution();
-        solutionShown = true;
-        gameActive = false;
+        gameState = 'solution';
         renderMaze();
     }
 
     function handleCellClick(r, c) {
-        if (!gameActive) return;
+        if (gameState !== 'playing') return;
 
         const [cr, cc] = currentPos;
         const dist = Math.abs(r - cr) + Math.abs(c - cc);
 
         // Must be adjacent
         if (dist !== 1) {
+            flashCell(r, c);
+            return;
+        }
+
+        // Can't step on flooded cell
+        if (timedMode && filledSet.has(cellKey(r, c))) {
             flashCell(r, c);
             return;
         }
@@ -483,7 +565,7 @@
             updateScoreDisplay();
             renderStatsTable();
             showScorePop(+10);
-            gameActive = false;
+            gameState = 'won';
             renderMaze();
             showWin();
             return;
@@ -556,7 +638,7 @@
         maze.innerHTML = '';
 
         const solSet = new Set();
-        if (solutionShown) {
+        if (gameState === 'solution') {
             solutionPath.forEach(([sr, sc]) => solSet.add(cellKey(sr, sc)));
         }
 
@@ -573,12 +655,16 @@
                 let text = 'text-gray-300';
                 let extra = '';
 
-                if (isCurrent && !solutionShown) {
+                const isFilled = filledSet.has(cellKey(r, c));
+
+                if (isCurrent && gameState !== 'solution') {
                     bg = 'bg-amber-500'; text = 'text-gray-900 font-extrabold'; extra = 'cell-current';
-                } else if (isEntrance) {
-                    bg = 'bg-emerald-600'; text = 'text-white font-bold'; extra = 'ring-2 ring-emerald-400';
                 } else if (isExit) {
                     bg = 'bg-rose-600'; text = 'text-white font-bold'; extra = 'ring-2 ring-rose-400';
+                } else if (isFilled) {
+                    bg = ''; text = 'text-white font-bold'; extra = 'cell-flood';
+                } else if (isEntrance) {
+                    bg = 'bg-emerald-600'; text = 'text-white font-bold'; extra = 'ring-2 ring-emerald-400';
                 } else if (isOnSolution) {
                     bg = 'bg-amber-400/60'; text = 'text-white font-bold';
                 } else if (isVisited) {
@@ -591,13 +677,83 @@
                 cell.dataset.c = c;
                 cell.addEventListener('click', () => handleCellClick(r, c));
 
+                if (isEntrance && chaseCountdown > 0) {
+                    const badge = document.createElement('span');
+                    badge.className = 'chase-timer';
+                    badge.textContent = chaseCountdown;
+                    cell.appendChild(badge);
+                }
+
                 maze.appendChild(cell);
             }
         }
     }
 
+    // ─── Chase mode: flood logic ─────────────────────────────
+    function startChase() {
+        chaseCountdown = 10;
+        countdownTimer = setInterval(() => {
+            chaseCountdown--;
+            if (chaseCountdown > 0) {
+                // Update badge directly without full re-render
+                const badge = document.querySelector(`[data-r="${entrance[0]}"][data-c="${entrance[1]}"] .chase-timer`);
+                if (badge) badge.textContent = chaseCountdown;
+            } else {
+                clearInterval(countdownTimer);
+                countdownTimer = null;
+                // Remove badge
+                const badge = document.querySelector(`[data-r="${entrance[0]}"][data-c="${entrance[1]}"] .chase-timer`);
+                if (badge) badge.remove();
+                // Start flood
+                chaseTimer = setInterval(floodTick, 2000);
+            }
+        }, 1000);
+    }
+
+    function floodTick() {
+        if (gameState !== 'playing' || filledIndex >= solPathCache.length) {
+            stopChase();
+            return;
+        }
+        const [fr, fc] = solPathCache[filledIndex];
+        filledSet.add(cellKey(fr, fc));
+        filledIndex++;
+
+        // Animate only the new head cell directly on the DOM
+        const el = document.querySelector(`[data-r="${fr}"][data-c="${fc}"]`);
+        if (el) {
+            el.className = el.className.replace(/bg-\S+/g, '');
+            el.classList.add('cell-flood-head');
+        }
+
+        // Check if flood reached the player
+        if (filledSet.has(cellKey(currentPos[0], currentPos[1]))) {
+            showGameOver();
+        }
+    }
+
+    function stopChase() {
+        if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; chaseCountdown = 0; }
+        if (chaseTimer) { clearInterval(chaseTimer); chaseTimer = null; }
+    }
+
+    function showGameOver() {
+        gameState = 'gameover';
+        stopChase();
+
+        sessionScore -= 10;
+        stats.totalScore -= 10;
+        saveStats();
+        updateScoreDisplay();
+        renderStatsTable();
+        showScorePop(-10);
+
+        document.getElementById('gameover-message').classList.remove('hidden');
+    }
+
     // ─── Win celebration ────────────────────────────────────
     function showWin() {
+        stopChase();
         document.getElementById('win-message').classList.remove('hidden');
         document.getElementById('win-stats').textContent =
             `Completed in ${moveCount} move${moveCount !== 1 ? 's' : ''} with a score of ${sessionScore}!`;
